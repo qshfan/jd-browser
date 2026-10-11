@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Jobs in Zurich and Zug</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23d52b1e'/%3E%3Cpath d='M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=2">
+</head>
+<body>
+  <header class="masthead">
+    <h1>Jobs in Zurich and Zug</h1>
+    <form class="filters" id="filters" role="search">
+      <label class="field field--query">
+        <span class="sr-only">Search title, company and description</span>
+        <input type="search" name="q" placeholder="Search jobs, e.g. spark, Datenplattform" autocomplete="off">
+      </label>
+      <label class="field">
+        <span class="field__label">Search</span>
+        <select name="search"><option value="">All searches</option></select>
+      </label>
+      <label class="field">
+        <span class="field__label">Posted</span>
+        <select name="posted">
+          <option value="">Any time</option>
+          <option value="1">Last 24 hours</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Seniority</span>
+        <select name="seniority">
+          <option value="">Any level</option>
+          <option>Internship</option>
+          <option>Entry level</option>
+          <option>Associate</option>
+          <option>Mid-Senior level</option>
+          <option>Director</option>
+          <option>Executive</option>
+          <option>Not Applicable</option>
+        </select>
+      </label>
+      <label class="field field--check">
+        <input type="checkbox" name="priority" value="1">
+        <span>Priority companies only</span>
+      </label>
+    </form>
+  </header>
+
+  <main class="desk">
+    <section class="results" aria-label="Jobs">
+      <p class="results__count" id="count" aria-live="polite">Loading jobs…</p>
+      <ol class="job-list" id="list"></ol>
+      <button class="more" id="more" type="button" hidden>Show more jobs</button>
+    </section>
+
+    <article class="reader" id="reader" aria-live="polite">
+      <div class="reader__empty">
+        <p>Choose a job on the left to read its description.</p>
+      </div>
+    </article>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"
+          integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"
+          integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="config.js?v=2"></script>
+  <script src="app.js?v=2"></script>
+</body>
+</html>
