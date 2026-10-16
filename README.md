@@ -31,7 +31,11 @@ only read the `api` schema.
 ## Data
 
 - The page reads `api.jobs` and `api.search_jobs`, defined in jd_hub's
-  `db/migrations/002_search_and_api.sql`. If those change, update `app.js` to match.
+  `db/migrations/002_search_and_api.sql`, and `api.priority_companies`
+  (`005_api_priority_companies.sql`). If those change, update `app.js` to match.
+- Priority companies are rows in the Supabase table `jd.priority_companies`,
+  matched to a job's company by name, ignoring case. "Which?" next to the
+  checkbox lists them.
 - The job list (without descriptions) is loaded once when the page opens. The
   search, posted, seniority and priority filters then run in the browser, so
   they apply instantly. Only the text search asks the database, once per

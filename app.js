@@ -2,6 +2,7 @@
 //   GET /jobs?select=<list fields>       recent jobs, once, when the page opens
 //   GET /rpc/search_jobs?q=…&select=id   ids matching a text search, best first
 //   GET /jobs?source_job_id=…            one job with its description
+//   GET /priority_companies              the companies "Priority" means, for "Which?"
 // The jobs change once a day, so the list is loaded once and the search,
 // posted, seniority and priority filters run in the browser: no request, no
 // wait. Only the text search goes to the database, and its answers are cached.
@@ -377,6 +378,25 @@ function fillSearches() {
   form.search.value = form.search.dataset.wanted || "";
 }
 
+// Same matching as the database: the company name, ignoring case.
+function fillPriorityCompanies(companies) {
+  const counts = new Map();
+  for (const job of jobs) {
+    if (job.priority) counts.set(job.company.toLowerCase(), (counts.get(job.company.toLowerCase()) || 0) + 1);
+  }
+  const items = document.getElementById("priority-companies");
+  for (const { company } of companies) {
+    const n = counts.get(company.toLowerCase()) || 0;
+    const item = document.createElement("li");
+    item.append(span("", company), span("priority-list__count", n === 1 ? "1 job" : `${n} jobs`));
+    items.append(item);
+  }
+  document.getElementById("priority-note").textContent = companies.length
+    ? `Jobs posted in the last ${RECENT_DAYS} days. To change the list, edit the table jd.priority_companies in Supabase.`
+    : "No priority companies yet. Add them to the table jd.priority_companies in Supabase.";
+  document.getElementById("which").hidden = false;
+}
+
 function limitDates() {
   const posted = jobs.map((job) => job.posted_at).filter(Boolean).sort();
   for (const input of [form.from, form.to]) {
@@ -409,12 +429,16 @@ more.addEventListener("click", renderMore);
 const initialJob = readUrl();
 if (initialJob) openJob(initialJob);
 count.textContent = "Loading jobs…";
+const priorityCompanies = get("priority_companies", [["select", "company"]]);
+priorityCompanies.catch(() => {}); // handled below, once the jobs are in
 loadAllJobs().then(
   (rows) => {
     jobs = rows;
     fillSearches();
     limitDates();
     showJobs();
+    // Without the list, "Which?" just stays hidden.
+    priorityCompanies.then(fillPriorityCompanies, () => {});
   },
   showError,
 );
