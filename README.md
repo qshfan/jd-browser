@@ -30,8 +30,14 @@ only read the `api` schema.
 
 ## Data
 
-- The page reads `api.search_jobs`, `api.jobs` and `api.searches`, defined in
-  jd_hub's `db/migrations/002_search_and_api.sql` and `003_api_searches.sql`.
-  If those views change, update `app.js` to match.
+- The page reads `api.jobs` and `api.search_jobs`, defined in jd_hub's
+  `db/migrations/002_search_and_api.sql`. If those change, update `app.js` to match.
+- The job list (without descriptions) is loaded once when the page opens. The
+  search, posted, seniority and priority filters then run in the browser, so
+  they apply instantly. Only the text search asks the database, once per
+  distinct query. A description loads when its job is opened.
+- Only jobs posted in the last 60 days are loaded (`RECENT_DAYS` in `app.js`).
+  Older jobs stay in the database but don't appear on the page. The cut-off
+  keeps the first download at about 100 KB however large the table grows.
 - `api` must be listed under Supabase > Settings > Data API > Exposed schemas.
 - Filters and the open job are kept in the URL, so a copied link shows the same view.

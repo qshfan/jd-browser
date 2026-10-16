@@ -1,23 +1,38 @@
 // Read-only job browser over the Supabase Data API (schema `api`).
-//   GET /rpc/search_jobs?q=…   jobs, best match first (newest first without q)
-//   GET /jobs?source_job_id=…  one job with its description
-//   GET /searches              the searches to filter by
+//   GET /jobs?select=<list fields>       recent jobs, once, when the page opens
+//   GET /rpc/search_jobs?q=…&select=id   ids matching a text search, best first
+//   GET /jobs?source_job_id=…            one job with its description
+// The jobs change once a day, so the list is loaded once and the search,
+// posted, seniority and priority filters run in the browser: no request, no
+// wait. Only the text search goes to the database, and its answers are cached.
+// Only jobs posted in the last RECENT_DAYS are loaded: older ones are mostly
+// filled, and the cut-off keeps the download the same size as the table grows.
 // Filters and the open job live in the URL, so a link shows the same view.
 
 "use strict";
 
 const { supabaseUrl, publishableKey, pageSize } = window.JD_CONFIG;
 const API = `${supabaseUrl}/rest/v1`;
-const LIST_FIELDS = "source,source_job_id,title,company,location,posted_at,first_seen_at,priority";
+const LIST_FIELDS =
+  "source,source_job_id,title,company,location,posted_at,first_seen_at,priority,seniority_level,search_names";
+const API_PAGE = 1000; // the Data API returns at most 1000 rows per request
+const RECENT_DAYS = 60;
+const cutoff = localDate(-RECENT_DAYS);
+// Posted since the cut-off, or (no posting date) first seen since then.
+const RECENT = ["or", `(posted_at.gte.${cutoff},and(posted_at.is.null,first_seen_at.gte.${cutoff}))`];
 
 const form = document.getElementById("filters");
 const list = document.getElementById("list");
 const count = document.getElementById("count");
 const more = document.getElementById("more");
 const reader = document.getElementById("reader");
+const clearDates = document.getElementById("clear-dates");
 
-let offset = 0;
-let request = 0; // ignore responses to superseded requests
+let jobs = null;          // every job, newest first; null until loaded
+const matches = new Map(); // text query -> Promise of source_job_ids, best match first
+let shown = [];           // jobs passing the current filters, in display order
+let rendered = 0;         // how many of `shown` are in the list
+let request = 0;          // ignore text-search answers to superseded queries
 let selected = null;
 
 class ApiError extends Error {
@@ -28,18 +43,42 @@ class ApiError extends Error {
   }
 }
 
-async function get(path, params, { exactCount = false } = {}) {
+async function get(path, params) {
   const url = new URL(`${API}/${path}`);
   for (const [key, value] of params) url.searchParams.append(key, value);
-  const headers = { apikey: publishableKey, "Accept-Profile": "api" };
-  if (exactCount) headers.Prefer = "count=exact";
-  const response = await fetch(url, { headers });
+  const response = await fetch(url, { headers: { apikey: publishableKey, "Accept-Profile": "api" } });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(response.status, body.message || response.statusText, body.code);
   }
-  const total = Number((response.headers.get("Content-Range") || "").split("/")[1]);
-  return { rows: await response.json(), total: Number.isFinite(total) ? total : null };
+  return response.json();
+}
+
+// -- data -------------------------------------------------------------------------
+
+async function loadAllJobs() {
+  const rows = [];
+  for (;;) {
+    const page = await get("jobs", [
+      ["select", LIST_FIELDS],
+      RECENT,
+      ["order", "first_seen_at.desc,posted_at.desc.nullslast,source_job_id.desc"],
+      ["limit", API_PAGE],
+      ["offset", rows.length],
+    ]);
+    rows.push(...page);
+    if (page.length < API_PAGE) return rows;
+  }
+}
+
+function textMatches(q) {
+  if (!matches.has(q)) {
+    const ids = get("rpc/search_jobs", [["q", q], ["select", "source_job_id"], RECENT])
+      .then((rows) => rows.map((row) => row.source_job_id));
+    ids.catch(() => matches.delete(q)); // let a failed search be retried
+    matches.set(q, ids);
+  }
+  return matches.get(q);
 }
 
 // -- filters <-> URL ------------------------------------------------------------
@@ -49,7 +88,8 @@ function filters() {
   return {
     q: (data.get("q") || "").trim(),
     search: data.get("search") || "",
-    posted: data.get("posted") || "",
+    from: data.get("from") || "",
+    to: data.get("to") || "",
     seniority: data.get("seniority") || "",
     priority: data.get("priority") === "1",
   };
@@ -60,7 +100,8 @@ function writeUrl() {
   const params = new URLSearchParams();
   if (f.q) params.set("q", f.q);
   if (f.search) params.set("search", f.search);
-  if (f.posted) params.set("posted", f.posted);
+  if (f.from) params.set("from", f.from);
+  if (f.to) params.set("to", f.to);
   if (f.seniority) params.set("seniority", f.seniority);
   if (f.priority) params.set("priority", "1");
   if (selected) params.set("job", selected);
@@ -72,48 +113,78 @@ function readUrl() {
   const params = new URLSearchParams(location.search);
   form.q.value = params.get("q") || "";
   form.search.dataset.wanted = params.get("search") || "";
-  form.posted.value = params.get("posted") || "";
+  form.from.value = params.get("from") || "";
+  form.to.value = params.get("to") || "";
+  // Links from before the date picker: ?posted=7 meant "the last 7 days".
+  if (params.has("posted") && !params.has("from")) form.from.value = localDate(-Number(params.get("posted")));
   form.seniority.value = params.get("seniority") || "";
   form.priority.checked = params.get("priority") === "1";
+  syncDates();
   return params.get("job");
 }
 
-function queryParams(f) {
-  const params = [["q", f.q], ["select", LIST_FIELDS], ["limit", pageSize], ["offset", offset]];
-  if (f.search) params.push(["search_names", `cs.{${JSON.stringify(f.search)}}`]);
-  if (f.posted) params.push(["posted_at", `gte.${daysAgo(Number(f.posted))}`]);
-  if (f.seniority) params.push(["seniority_level", `eq.${f.seniority}`]);
-  if (f.priority) params.push(["priority", "is.true"]);
-  return params;
+// One date picked = that day; the other end follows until it is set too, and
+// the two ends never cross.
+function syncDates(changed) {
+  const { from, to } = form;
+  if (changed === from && from.value && (!to.value || to.value < from.value)) to.value = from.value;
+  if (changed === to && to.value && (!from.value || from.value > to.value)) from.value = to.value;
+  clearDates.hidden = !from.value && !to.value;
+}
+
+function passes(job, f) {
+  if (f.search && !job.search_names.includes(f.search)) return false;
+  if (f.from && !(job.posted_at && job.posted_at >= f.from)) return false;
+  if (f.to && !(job.posted_at && job.posted_at <= f.to)) return false;
+  if (f.seniority && job.seniority_level !== f.seniority) return false;
+  if (f.priority && !job.priority) return false;
+  return true;
 }
 
 // -- list ---------------------------------------------------------------------------
 
-async function loadJobs({ append = false } = {}) {
+async function showJobs() {
+  if (!jobs) return;
   const mine = ++request;
-  if (!append) offset = 0;
-  more.hidden = true;
-  if (!append) count.textContent = "Loading jobs…";
-
-  try {
-    const { rows, total } = await get("rpc/search_jobs", queryParams(filters()), { exactCount: true });
-    if (mine !== request) return;
-    if (!append) list.replaceChildren();
-    rows.forEach((job) => list.append(jobItem(job)));
-    offset += rows.length;
-    count.textContent = countText(total ?? offset);
-    more.hidden = total === null || offset >= total;
-  } catch (error) {
-    if (mine !== request) return;
-    list.replaceChildren();
-    count.textContent = "";
-    list.append(notice(error));
+  const f = filters();
+  let ordered = jobs;
+  if (f.q) {
+    count.textContent = "Searching…";
+    try {
+      const ids = await textMatches(f.q);
+      if (mine !== request) return;
+      const byId = new Map(jobs.map((job) => [job.source_job_id, job]));
+      ordered = ids.map((id) => byId.get(id)).filter(Boolean);
+    } catch (error) {
+      if (mine !== request) return;
+      showError(error);
+      return;
+    }
   }
+  shown = ordered.filter((job) => passes(job, f));
+  rendered = 0;
+  list.replaceChildren();
+  count.textContent = countText(shown.length, !f.from && !f.to);
+  renderMore();
 }
 
-function countText(total) {
+function renderMore() {
+  const next = shown.slice(rendered, rendered + pageSize);
+  list.append(...next.map(jobItem));
+  rendered += next.length;
+  more.hidden = rendered >= shown.length;
+}
+
+function showError(error) {
+  list.replaceChildren(notice(error));
+  count.textContent = "";
+  more.hidden = true;
+}
+
+function countText(total, anyDate) {
   if (total === 0) return "No jobs match these filters. Try a shorter search or fewer filters.";
-  return total === 1 ? "1 job" : `${total} jobs`;
+  const jobs = total === 1 ? "1 job" : `${total} jobs`;
+  return anyDate ? `${jobs} posted in the last ${RECENT_DAYS} days` : jobs;
 }
 
 function jobItem(job) {
@@ -161,7 +232,7 @@ async function openJob(id) {
   reader.replaceChildren(span("reader__loading", "Loading the job…"));
 
   try {
-    const { rows } = await get("jobs", [["source_job_id", `eq.${id}`], ["select", "*"], ["limit", 1]]);
+    const rows = await get("jobs", [["source_job_id", `eq.${id}`], ["select", "*"], ["limit", 1]]);
     if (selected !== id) return;
     reader.replaceChildren(...(rows[0] ? jobView(rows[0]) : [span("", "This job is no longer in the database.")]));
     reader.scrollTop = 0;
@@ -269,16 +340,17 @@ function externalLink(href, text) {
   return link;
 }
 
-function daysAgo(days) {
+// YYYY-MM-DD in the viewer's time zone, `offset` days from today.
+function localDate(offset = 0) {
   const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date.toISOString().slice(0, 10);
+  date.setDate(date.getDate() + offset);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 function relativeDay(isoDate) {
   if (!isoDate) return "on an unknown date";
-  const today = new Date(new Date().toISOString().slice(0, 10));
-  const days = Math.round((today - new Date(isoDate.slice(0, 10))) / 86400000);
+  const days = Math.round((new Date(localDate()) - new Date(isoDate.slice(0, 10))) / 86400000);
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";
   if (days < 30) return `${days} days ago`;
@@ -291,36 +363,58 @@ function formatDate(iso) {
 
 // -- start ----------------------------------------------------------------------------
 
-async function loadSearches() {
-  try {
-    const { rows } = await get("searches", [["select", "search_name,jobs"]]);
-    for (const { search_name, jobs } of rows) {
-      const option = document.createElement("option");
-      option.value = search_name;
-      option.textContent = `${search_name} (${jobs})`;
-      form.search.append(option);
-    }
-    form.search.value = form.search.dataset.wanted || "";
-  } catch {
-    // The list request reports the problem; the filter just stays at "All searches".
+function fillSearches() {
+  const counts = new Map();
+  for (const job of jobs) {
+    for (const name of job.search_names) counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  for (const name of [...counts.keys()].sort()) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = `${name} (${counts.get(name)})`;
+    form.search.append(option);
+  }
+  form.search.value = form.search.dataset.wanted || "";
+}
+
+function limitDates() {
+  const posted = jobs.map((job) => job.posted_at).filter(Boolean).sort();
+  for (const input of [form.from, form.to]) {
+    input.min = posted[0] || cutoff;
+    input.max = localDate();
   }
 }
 
 let typing;
 form.q.addEventListener("input", () => {
   clearTimeout(typing);
-  typing = setTimeout(() => { writeUrl(); loadJobs(); }, 300);
+  typing = setTimeout(() => { writeUrl(); showJobs(); }, 250);
 });
 form.addEventListener("change", (event) => {
   if (event.target === form.q) return;
+  syncDates(event.target);
   writeUrl();
-  loadJobs();
+  showJobs();
+});
+clearDates.addEventListener("click", () => {
+  form.from.value = "";
+  form.to.value = "";
+  syncDates();
+  writeUrl();
+  showJobs();
 });
 form.addEventListener("submit", (event) => event.preventDefault());
-more.addEventListener("click", () => loadJobs({ append: true }));
+more.addEventListener("click", renderMore);
 
 const initialJob = readUrl();
-loadSearches().then(() => {
-  loadJobs();
-  if (initialJob) openJob(initialJob);
-});
+if (initialJob) openJob(initialJob);
+count.textContent = "Loading jobs…";
+loadAllJobs().then(
+  (rows) => {
+    jobs = rows;
+    fillSearches();
+    limitDates();
+    showJobs();
+  },
+  showError,
+);
