@@ -113,6 +113,41 @@ body {
 
 .filters input[type="search"] { font-size: 1rem; }
 
+/* Posted: one day (both ends the same) or a range. */
+.dates {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.filters input[type="date"] {
+  min-height: 2.4rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  color-scheme: light dark;
+  font: inherit;
+  font-size: 0.9375rem;
+}
+
+.dates__dash { color: var(--muted); }
+
+.dates__clear {
+  padding: 0.35rem 0.25rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dates__clear:hover { color: var(--ink); }
+.dates__clear[hidden] { display: none; }
+
 .filters input[type="checkbox"] { accent-color: var(--red); width: 1rem; height: 1rem; }
 
 /* Desk: list + reader ------------------------------------------------------- */
